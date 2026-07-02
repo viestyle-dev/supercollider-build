@@ -1,0 +1,176 @@
+name: Build SuperCollider (Raspberry Pi Zero 2 W: armv7 + arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      sc_version:
+        description: "ビルドする SuperCollider のタグ (空なら最新リリースを自動取得)"
+        required: false
+        default: ""
+  schedule:
+    # 毎週月曜 03:00 UTC に最新リリースをチェックしてビルド
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Resolve SuperCollider version
+        id: version
+        run: |
+          set -euo pipefail
+          INPUT_VERSION="${{ github.event.inputs.sc_version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=$(curl -fsSL https://api.github.com/repos/supercollider/supercollider/releases/latest \
+              | jq -r '.tag_name // empty')
+            if [ -z "$VERSION" ]; then
+              VERSION=$(curl -fsSL https://api.github.com/repos/supercollider/supercollider/tags \
+                | jq -r '.[].name' \
+                | grep -E '^Version-[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sort -V | tail -n1)
+            fi
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::error::SuperCollider のバージョンを解決できませんでした"
+            exit 1
+          fi
+          echo "Resolved SuperCollider version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="sc-${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "既に $TAG のリリースが存在するためビルドをスキップします"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-armv7:
+    needs: resolve-version
+    if: needs.resolve-version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build SuperCollider and export binaries (armv7, QEMU クロスビルド)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm/v7
+          target: artifact
+          build-args: |
+            SC_VERSION=${{ needs.resolve-version.outputs.version }}
+          outputs: type=local,dest=./output
+          push: false
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          tar czf "supercollider-${VERSION}-armv7.tar.gz" -C output/opt supercollider
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: armv7-tarball
+          path: supercollider-*.tar.gz
+
+  build-arm64:
+    needs: resolve-version
+    if: needs.resolve-version.outputs.exists == 'false'
+    # GitHub がホストするネイティブ arm64 ランナー。QEMU/Docker 不要で実機同等の速度でビルドできる
+    # (パブリックリポジトリは無料枠、プライベートリポジトリは課金対象。使えない場合は自前の arm64 self-hosted runner に差し替え)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git cmake build-essential pkg-config \
+            libjack-jackd2-dev libsndfile1-dev libasound2-dev \
+            libavahi-client-dev libreadline-dev libfftw3-dev \
+            libxt-dev libudev-dev ca-certificates \
+            libboost-dev perl
+
+      - name: Clone SuperCollider
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          git clone --depth 1 --branch "$VERSION" --recurse-submodules \
+            https://github.com/supercollider/supercollider.git src
+
+      - name: Patch nova-simd NEON return-type issue
+        run: |
+          perl -0777 -i -pe \
+            's/(float get \(std::size_t index\) const\s*\{.*?)\bassert\(false\);/$1assert(false); return 0.f;/s' \
+            src/external_libraries/nova-simd/vec/vec_neon.hpp
+
+      - name: Configure and build (arm64 ネイティブ)
+        run: |
+          set -euo pipefail
+          mkdir -p src/build
+          cd src/build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSC_IDE=OFF -DSC_QT=OFF \
+            -DSC_EL=OFF -DSC_VIM=OFF -DSC_ED=OFF \
+            -DNATIVE=OFF \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/stage/supercollider"
+          make -j"$(nproc)"
+          make install
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          tar czf "supercollider-${VERSION}-arm64.tar.gz" -C stage supercollider
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-tarball
+          path: supercollider-*.tar.gz
+
+  release:
+    needs: [resolve-version, build-armv7, build-arm64]
+    if: needs.resolve-version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: sc-${{ needs.resolve-version.outputs.version }}
+          name: "SuperCollider ${{ needs.resolve-version.outputs.version }} (Raspberry Pi Zero 2 W: armv7 + arm64)"
+          files: dist/*.tar.gz
