@@ -201,3 +201,9 @@ docker run --rm supercollider:arm64 -v   # quick smoke test
 
 Pass `--build-arg SC_VERSION=Version-x.y.z` to any of the commands above to pin a specific
 SuperCollider tag instead of the Dockerfile's default.
+
+## License
+
+This repository's build tooling (Dockerfiles, workflows, scripts) is licensed under the
+[MIT License](LICENSE). SuperCollider itself is licensed separately under the GPLv3 — see
+the [upstream repository](https://github.com/supercollider/supercollider) for details.
