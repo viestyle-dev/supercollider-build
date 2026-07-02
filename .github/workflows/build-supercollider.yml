@@ -101,55 +101,34 @@ jobs:
   build-arm64:
     needs: resolve-version
     if: needs.resolve-version.outputs.exists == 'false'
-    # GitHub がホストするネイティブ arm64 ランナー。QEMU/Docker 不要で実機同等の速度でビルドできる
+    # GitHub がホストするネイティブ arm64 ランナー。Dockerfile.arm64 を Debian ベースでビルドすることで
+    # armv7 側と同じ Raspberry Pi OS 互換のライブラリ構成にする。ネイティブなので QEMU は不要
     # (パブリックリポジトリは無料枠、プライベートリポジトリは課金対象。使えない場合は自前の arm64 self-hosted runner に差し替え)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            git cmake build-essential pkg-config \
-            libjack-jackd2-dev libsndfile1-dev libasound2-dev \
-            libavahi-client-dev libreadline-dev libfftw3-dev \
-            libxt-dev libudev-dev ca-certificates \
-            libboost-dev perl
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Clone SuperCollider
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          git clone --depth 1 --branch "$VERSION" --recurse-submodules \
-            https://github.com/supercollider/supercollider.git src
-
-      - name: Patch nova-simd NEON return-type issue
-        run: |
-          perl -0777 -i -pe \
-            's/(float get \(std::size_t index\) const\s*\{.*?)\bassert\(false\);/$1assert(false); return 0.f;/s' \
-            src/external_libraries/nova-simd/vec/vec_neon.hpp
-
-      - name: Configure and build (arm64 ネイティブ)
-        run: |
-          set -euo pipefail
-          mkdir -p src/build
-          cd src/build
-          cmake .. \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DSC_IDE=OFF -DSC_QT=OFF \
-            -DSC_EL=OFF -DSC_VIM=OFF -DSC_ED=OFF \
-            -DNATIVE=OFF \
-            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/stage/supercollider"
-          make -j"$(nproc)"
-          make install
+      - name: Build SuperCollider and export binaries (arm64 ネイティブ Docker ビルド)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.arm64
+          platforms: linux/arm64
+          target: artifact
+          build-args: |
+            SC_VERSION=${{ needs.resolve-version.outputs.version }}
+          outputs: type=local,dest=./output
+          push: false
 
       - name: Package tarball
         run: |
           set -euo pipefail
           VERSION="${{ needs.resolve-version.outputs.version }}"
-          tar czf "supercollider-${VERSION}-arm64.tar.gz" -C stage supercollider
+          tar czf "supercollider-${VERSION}-arm64.tar.gz" -C output/opt supercollider
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
