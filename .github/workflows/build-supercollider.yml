@@ -1,4 +1,4 @@
-name: "Build SuperCollider (Raspberry Pi Zero 2 W: armv7 + arm64)"
+name: "Build SuperCollider (Debian-based ARM Linux: armv7 + arm64)"
 
 on:
   workflow_dispatch:
@@ -63,6 +63,10 @@ jobs:
     needs: resolve-version
     if: needs.resolve-version.outputs.exists == 'false'
     runs-on: ubuntu-latest
+    env:
+      # docker/build-push-action が自動アップロードする *.dockerbuild サマリー artifact を無効化
+      # (release ジョブの download-artifact に無関係な artifact が混入するのを防ぐ)
+      DOCKER_BUILD_SUMMARY: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,36 +79,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build SuperCollider and export binaries (armv7, QEMU クロスビルド)
+      - name: Build SuperCollider and export tarball (armv7, QEMU クロスビルド)
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/arm/v7
-          target: artifact
+          target: release
           build-args: |
             SC_VERSION=${{ needs.resolve-version.outputs.version }}
-          outputs: type=local,dest=./output
+          outputs: type=local,dest=./dist
           push: false
-
-      - name: Package tarball
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          tar czf "supercollider-${VERSION}-armv7.tar.gz" -C output/opt supercollider
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: armv7-tarball
-          path: supercollider-*.tar.gz
+          path: dist/*.tar.gz
 
   build-arm64:
     needs: resolve-version
     if: needs.resolve-version.outputs.exists == 'false'
     # GitHub がホストするネイティブ arm64 ランナー。Dockerfile.arm64 を Debian ベースでビルドすることで
-    # armv7 側と同じ Raspberry Pi OS 互換のライブラリ構成にする。ネイティブなので QEMU は不要
+    # armv7 側と同じ Debian 系ディストリビューション互換のライブラリ構成にする。ネイティブなので QEMU は不要
     # (パブリックリポジトリは無料枠、プライベートリポジトリは課金対象。使えない場合は自前の arm64 self-hosted runner に差し替え)
     runs-on: ubuntu-24.04-arm
+    env:
+      DOCKER_BUILD_SUMMARY: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -112,29 +112,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build SuperCollider and export binaries (arm64 ネイティブ Docker ビルド)
+      - name: Build SuperCollider and export tarball (arm64 ネイティブ Docker ビルド)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.arm64
           platforms: linux/arm64
-          target: artifact
+          target: release
           build-args: |
             SC_VERSION=${{ needs.resolve-version.outputs.version }}
-          outputs: type=local,dest=./output
+          outputs: type=local,dest=./dist
           push: false
-
-      - name: Package tarball
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          tar czf "supercollider-${VERSION}-arm64.tar.gz" -C output/opt supercollider
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: arm64-tarball
-          path: supercollider-*.tar.gz
+          path: dist/*.tar.gz
 
   release:
     needs: [resolve-version, build-armv7, build-arm64]
@@ -145,11 +139,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: "*-tarball"
           merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: sc-${{ needs.resolve-version.outputs.version }}
-          name: "SuperCollider ${{ needs.resolve-version.outputs.version }} (Raspberry Pi Zero 2 W: armv7 + arm64)"
+          name: "SuperCollider ${{ needs.resolve-version.outputs.version }} (Debian-based ARM Linux: armv7 + arm64)"
           files: dist/*.tar.gz
