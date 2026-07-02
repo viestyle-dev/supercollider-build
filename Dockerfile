@@ -3,7 +3,7 @@ ARG SC_VERSION=Version-3.14.1
 
 # ---- build stage (armv7) ----
 ARG TARGETPLATFORM=linux/arm/v7
-FROM --platform=$TARGETPLATFORM debian:bullseye AS builder
+FROM --platform=$TARGETPLATFORM debian:trixie AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -43,7 +43,7 @@ COPY --from=builder /opt/supercollider /opt/supercollider
 # ---- package stage (armv7): tar.gz を Docker 側で作成 ----
 # --platform=$BUILDPLATFORM でビルドホスト側のネイティブアーキテクチャで実行し、
 # tar/gzip のためだけに QEMU エミュレーションを使わないようにする
-FROM --platform=$BUILDPLATFORM debian:bullseye-slim AS package
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS package
 ARG SC_VERSION
 COPY --from=builder /opt/supercollider /opt/supercollider
 RUN tar czf "/supercollider-${SC_VERSION}-armv7.tar.gz" -C /opt supercollider
@@ -54,11 +54,11 @@ FROM scratch AS release
 COPY --from=package /supercollider-*.tar.gz /
 
 # ---- runtime stage (armv7) ----
-FROM --platform=linux/arm/v7 debian:bullseye-slim
+FROM --platform=linux/arm/v7 debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsndfile1 libasound2 libavahi-client3 libfftw3-single3 \
+    libsndfile1 libasound2t64 libavahi-client3 libfftw3-single3 \
     libjack-jackd2-0 jackd2 \
     && rm -rf /var/lib/apt/lists/*
 

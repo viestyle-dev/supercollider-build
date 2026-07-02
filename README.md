@@ -25,17 +25,20 @@ CPU happened to compile them.
 
 Both Dockerfiles share the same stage layout:
 
-1. **`builder`** — Debian bullseye image with the SuperCollider build dependencies; clones the
+1. **`builder`** — Debian trixie image with the SuperCollider build dependencies; clones the
    requested tag and compiles it with CMake.
 2. **`artifact`** — a `scratch`-based stage containing only `/opt/supercollider`, used to export
    the compiled binaries as a plain directory (`docker buildx build --target artifact -o type=local,dest=...`).
 3. **`runtime`** — a slim Debian image with just the runtime shared libraries, for anyone who
    wants to run `scsynth` directly in Docker instead of extracting the tarball onto a device.
 
-Both stages build against Debian bullseye so the armv7 and arm64 binaries link against the
-same library versions that ship with Debian-based distros (Raspberry Pi OS, Armbian, DietPi,
-plain Debian, etc.), avoiding glibc/ABI mismatches that can happen when building on an
+Both stages build against Debian trixie so the armv7 and arm64 binaries link against the
+same library versions that ship with current Debian-based distros (Raspberry Pi OS, Armbian,
+DietPi, plain Debian, etc.), avoiding glibc/ABI mismatches that can happen when building on an
 unrelated distro family (e.g. Alpine/musl, or Ubuntu's differently-versioned packages).
+Because the binaries link against trixie's glibc, the target device needs a trixie-based
+(Debian 13) or newer OS; for older releases (bookworm/bullseye), rebuild with the base image
+changed accordingly.
 
 ## Triggering a build
 
@@ -96,7 +99,7 @@ need to come from `apt` (same list as the Dockerfiles' `runtime` stage):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y libsndfile1 libasound2 libavahi-client3 libfftw3-single3 \
+sudo apt-get install -y libsndfile1 libasound2t64 libavahi-client3 libfftw3-single3 \
   libjack-jackd2-0 jackd2
 ```
 
