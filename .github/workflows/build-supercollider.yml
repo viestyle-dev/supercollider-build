@@ -1,4 +1,4 @@
-name: Build SuperCollider (Raspberry Pi Zero 2 W: armv7 + arm64)
+name: "Build SuperCollider (Raspberry Pi Zero 2 W: armv7 + arm64)"
 
 on:
   workflow_dispatch:
