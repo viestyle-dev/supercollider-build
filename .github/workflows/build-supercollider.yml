@@ -23,17 +23,21 @@ jobs:
     steps:
       - name: Resolve SuperCollider version
         id: version
+        env:
+          # gh CLI は GITHUB_TOKEN で認証されるため、認証なし curl (60 req/h・共有 IP) の
+          # レート制限による 403 を回避できる (認証済みは 5000 req/h)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           INPUT_VERSION="${{ github.event.inputs.sc_version }}"
           if [ -n "$INPUT_VERSION" ]; then
             VERSION="$INPUT_VERSION"
           else
-            VERSION=$(curl -fsSL https://api.github.com/repos/supercollider/supercollider/releases/latest \
-              | jq -r '.tag_name // empty')
+            VERSION=$(gh api repos/supercollider/supercollider/releases/latest \
+              --jq '.tag_name // empty' || true)
             if [ -z "$VERSION" ]; then
-              VERSION=$(curl -fsSL https://api.github.com/repos/supercollider/supercollider/tags \
-                | jq -r '.[].name' \
+              VERSION=$(gh api --paginate repos/supercollider/supercollider/tags \
+                --jq '.[].name' \
                 | grep -E '^Version-[0-9]+\.[0-9]+\.[0-9]+$' \
                 | sort -V | tail -n1)
             fi
